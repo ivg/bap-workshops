@@ -1,0 +1,554 @@
+{BEGIN: title}
+
+                               Welcome to BAP Workshop
+                               =======================
+                                   < 06/18/2015 >
+
+ - To follow us you will need to install bap.master. If you don't have one
+   then do the following:
+
+   $ opam pin add bap git://github.com/BinaryAnalysisPlatform/bap.git
+
+- If you believe, that you have one, then double check:
+
+   $ opam show bap
+
+   Should say `version : master' and point to a correct upstream URL.
+   Also, do not forget to upgrade to the latest version with:
+
+   $ opam upgrade bap
+
+- While you're waiting some news from the OCaml World:
+  * OCaml 4.02.2 was released yesterday;
+  * OCaml will have multicore very soon;
+  * OCaml will have ad-hoc polymorphism very soon.
+
+{END}
+
+{BEGIN: program-analysis-overview}
+
+                     A Regular view on Program Analysis
+                     ==================================
+
+1. Parse a source code and get an AST;
+2. Build a CFG and transform to an IR;
+3. Run your analysis (several passes). 
+
+In Binary Analysis we do not have a source code. What we can do? 
+
+{END}
+
+{BEGIN: binary-analysis-overview}
+
+0. Get the source code;
+1. Parse a source code and get an AST;
+2. Build a CFG and transform to an IR;
+3. Run your analysis (several passes). 
+{END}
+
+{BEGIN: overview-of-a-zero-stage}
+
+0. Load a binary file
+1. Disassemble it
+2. Reconstruct symbols
+3. Emit BIL source code
+
+{END}
+
+{BEGIN: loading-binary-1}
+- Binary can be a packaged system, containing:
+  * instructions to a system loader on how to load
+    code and data into the process memory;
+  * information for linking external symbols;
+  * debugging information;
+  * lot's of other stuff.
+
+- Image module abstracts a binary container.
+
+- Memory module abstract a view on a region of a process memory.
+  We call it `mem` for short. A better name would be `region`.
+  Memory regions is a contiguous sequence of bytes indexed by 
+  virtual addresses. 
+
+- Memmap is a noncontiguous memory, i.e., a set of memory regions.
+  Memmap is an interval tree, where the role of interval is 
+  held by `mem'. Memmap is not a set, one can associate a user 
+  data with each regions. Thus Memmap is an associative data 
+  structure, or a map (dictionary). One can mimic a set, by using 
+  `unit memmap`, c.f., `Symtab.memory_of_fn`
+
+- Table is another associative data structure where `mem' is used 
+  as a key. But unlike `memmap`, `table` doesn't allow intersecting 
+  memory regions. In other words, `table` partition memory into 
+  non-intersecting memory regions. 
+{END}
+
+{BEGIN: loading-binary-1}
+
+- Not all binaries are well defined containers.
+
+- Binary can be just a BLOB.
+
+- Binary is not always a file.
+
+- We need to work with most general abstraction, thus
+  `image` is usually thrown away, as soon as we extracted 
+  all juice. The juice is represented with a `memmap`,
+  tagged with values of type `value`. 
+
+{END}
+
+{BEGIN: what-is-value-1}
+
+- Containers in OCaml are monomorphic (although they are polymorphic),
+  i.e., an OCaml list cannot contain values of different type. The 
+  following python code:
+
+  >>> ["main.c", 42]
+
+  Can be mimicked with sum types:
+
+  # [File "hello"; Line 42]
+
+  Usually this is more than enough, but some types have one 
+  problem. They are close, i.e., once they are defined, you 
+  can't add new types. And they should be defined in one place:
+
+        type t = File of string | Line of int
+
+{END}
+
+{BEGIN: what-is-value-2}
+
+  Fortunately, since OCaml 4.02 we have extensible variants:
+
+        type t = ..
+
+  Somewhere else (possibly in other file):
+
+        type t += File of string
+        type t += Line of int
+
+  That's exactly what we need, but...
+
+  1. Non serializable
+  2. Non comparable (consider abstract type with its own `compare`)
+  3. Non printable
+  4. Non portable (we still want 4.01)
+{END}
+
+{BEGIN: what-is-value-3}
+- BAP value solves all this problems. In a small syntactic cost.
+
+- `type t += File of string` becomes:
+         let file = Value.Tag.register (module String)
+          ~name:"file"
+          ~uuid:"2175c28c-08ca-4052-8385-3a01e1c6ab6f"
+
+- `File name`  => `Value.create file name`
+         
+- Extracting from:
+          match value with
+          | File name -> f name
+          | Line num -> f (string_of_int num) 
+          | _ -> ()
+
+   goes to:
+          match Value.get file value with
+          | Some name -> f name
+          | None -> match Value.get line value with
+            | Some line -> ...
+          ()
+
+- There is no parallel matching. Mostly because it goes 
+  against the idea of universal values. Universal values,
+  are not for introducing ad-hoc polymorphism, for that 
+  normal variants should be used.  Universal values, are 
+  for creating heterogeneous containers, and extracting
+  _known_ values. 
+{END}
+
+
+{BEGIN: what-is-value-4}
+
+- If value is an extensible sum type, then where is 
+  an extensible product type?
+
+- It is called `Dict`. Basically it is a set of 
+  `value`s. Where a tag of value (i.e., a constructor name)
+  plays a role of a field name, and the value itself plays
+  a role of field value.
+
+((File => "main.c")
+ (Line => 42))
+
+- Example:
+
+  let d = Dict.set Dict.empty filename "main.c"
+  let d = Dict.set d comment "A source code";;
+
+- Why not pretty printed?!
+  No good reason! Just a bug :(
+
+{END}
+
+
+{BEGIN: back-to-loader}
+
+- Loader uses `value memmap` as a most general representation
+  of a binary.
+
+- What we can expect? Basically, this depends on the path, which
+  a loader took to get `value memmap`, the underlying format, and
+  from the loader itself. Don't forget, that loader is dynamically 
+  linked itself, as it is a plugin.
+
+- If have had a real binary container, then:
+  * Regions occupied by segments are marked with `Image.segment`
+  * Regions occupied by sections are marked with `Image.section`
+  * Regions occupied by symbols  are marked with `Image.symbol`
+
+- If have had just a BLOB:
+  * The whole BLOB will be marked with an `Image.section` with 
+    value "bap.user"
+
+    let value = Value.create Image.section "bap.user"
+    
+
+- At least it is guaranteed that all memory that are needed is 
+  in the `memmap`. Basically, if you need to dig the memory itself,
+  and not interested in the values, you can ignore them.
+
+- When you're looking for a particular address in memory tree, expect
+  to get several regions.
+{END}
+
+{BEGIN: overview-of-a-zero-stage-0-done}
+
+0. Load a binary file         [DONE]
+1. Disassemble it
+2. Reconstruct symbols
+3. Emit BIL source code
+
+{END}
+
+
+{BEGIN: disassembling}
+
+- We have binary data, and we even have faint idea where to look;
+
+- We can use linear sweep, and disassemble every byte in a row;
+  * but in real binaries code is usually interleaved with data
+  * that means, that we can choke on data bytes, and loose track
+  * especially when instruction size is not fixed.
+
+- We can use Recursive Descent Disassembler:
+  * we need at least one initial point (root). More is better.
+  * still undecidable: 
+    - indirect jumps;
+    - call to <non return> functions;
+    - insufficient set of roots.
+
+- Other algorithms exist (but not yet implemented):
+  Shingled Graph Disassembly is interesting.
+
+- The algorithm is not hard-coded, you can choose one, or implement
+  your own, using basic interface to a disassembler.
+
+- But to move forward, we need to choose. We will stick with RDD. 
+
+{END}
+
+{BEGIN: where-to-get-roots}
+
+- For a Recursive Descent Disassembler we need a set
+  of roots to start with.
+
+- Basically, roots are function starts, but where to get them?
+  * Information about some of them (but not all) can be stored
+    in the binary container;
+  * Use IDA;
+  * We can ask a user to give them;
+  * BYTEWEIGHT;
+  * Shoot in the dark. 
+
+- If we have roots from different sources, how to combine them?
+  * merge all
+  * merge some
+  * other
+
+- There is no place for policies in a library. So `bap` utility is
+  doing the choice based on user interaction and some defaults.  `bap`
+  utility default policy is to get symbols from file and use byteweight
+  to get the rest, and then merge everything.  But you can adjust this:
+  --use-ida, --symbols, --no-byteweight.
+{END}
+
+{BEGIN: initial-cfg}
+
+- Recursive descent disassembler has a side effect of building 
+  CFG. In fact, it even doesn't disassemble all the memory. It
+  scans memory for jumps and calls, and perform initial markup.
+
+- This is called a machine CFG, and it is represented as a 
+  `block table`, where block is called "machine block"
+
+- Each block is one-entry-one-exit sequence of machine instructions.
+
+- But what is a machine instruction? 
+  * It is not a primitive
+  * It is a call to hardware function
+
+- Consider the following instruction:
+
+           str r11 [sp, #-4]
+
+   It has the following semantics:
+   - subtract `4` from `sp`
+   - store contents of r11 at address `sp`;
+
+   Or in pseudocode:
+      SP  := SP - 4
+      MEM := MEM with [SP] <- R11
+{END}
+
+{BEGIN: welcome-bil}
+- This pseudocode is called BIL.
+
+- It is used to describe semantics of a machine instruction.
+
+- The semantics the overall program is described inductively:
+  * given a semantics of one instruction build a semantics of 
+    a block of instructions;
+  * given a block, you can get a semantics of the function
+    CFG and a function itself;
+  * Knowing semantics of all functions, we can reason about 
+    program
+    
+- In that sense, a lexical structure of a disassemble program
+  is the following:
+  - machine instruction => BIL procedure
+  - block => BIL module
+  - function => BIL unit
+  - program  => BIL program.
+
+- Although BIL code is machine generated directly into AST, 
+  not into concrete syntax, it still should be treated as a 
+  source code, representing a program.
+
+- Consider `bap -d bil <filename>` 
+{END}
+
+
+{BEGIN: overview-of-a-zero-stage-1-done}
+
+0. Load a binary file      [DONE]
+1. Disassemble it          [DONE]
+2. Reconstruct symbols
+3. Emit BIL source code
+{END}
+
+{BEGIN: symbol-reconstruction}
+
+- Recursive descent is actually building a whole program CFG.
+
+- But we want to have an access procedural abstraction. We 
+  want to split this super cfg into a smaller parts, called
+  functions. 
+
+- We have a set of function starts (obtained earlier)
+
+- We can get a set of call targets
+
+- We can define a function as: 
+  Given a particular `entry` block, a function is a set of blocks,
+  that are reachable from this block without calls.
+
+- Some edges, that connects blocks in a CFG are speculative...
+  * Consider calls
+  * Callee are no mandated to return to a caller or to return
+    to whatever place it has requested
+  * The same is true for CPU exception (aka interrupts)
+  * But /usually/ they do return, that's why we introduce a fall
+    through after each call
+  * But sometimes they don't return, and we will continue to data
+    or, worse, we may trespass to another symbol
+  * A ?useful? heuristic - roots must not be trespassed.
+
+{END}
+
+
+{BEGIN: overview-of-a-zero-stage-2-done}
+
+0. Load a binary file      [DONE]
+1. Disassemble it          [DONE]
+2. Reconstruct symbols     [DONE]
+3. Emit BIL source code
+{END}
+
+
+{BEGIN: emit-code}
+
+- We can pretty-print the code, but we don't need to. 
+- Since BIL is machine generated it is already in a form of AST.
+- And, honestly speaking, we do not have a parser ;) 
+{END}
+
+{BEGIN: overview-of-a-zero-stage-2-done}
+
+0. Load a binary file      [DONE]
+1. Disassemble it          [DONE]
+2. Reconstruct symbols     [DONE]
+3. Emit BIL source code    [SKIP]
+{END}
+
+
+{BEGIN: binary-analysis-overview-2}
+
+0. Get the source code;                 [DONE]
+1. Parse a source code and get an AST;  [DONE]
+2. Build a CFG and transform to an IR;
+3. Run your analysis (several passes). 
+{END}
+
+
+{BEGIN: welcome-IR}
+
+- But I thought that BIL is IR?
+  * No. BIL is a language, similar to Fortran, Basic, etc;
+  * We can say that BIL is a BAP Instruction Language;
+  * Type `bil` is Abstract Syntax Tree, just another
+    representation of a source code.
+
+- Can I perform analysis in BIL?
+  * Yes you can. You can even perform analysis on a source code
+    directly. Or in a binary.
+
+  * But usually this is not, what you want.
+{END}
+
+
+{BEGIN: welcome-IR-2}
+
+- Differences between BIL and BIR:
+
+  * IR is a representation of BIL;
+  * IR is more suitable for writing analysis;
+  * IR is concrete: where BIL represents abstract 
+    entities, that are unchangeable and permanent,
+    BIR is a concrete representation suitable for,
+    modifications.
+
+- Common parts:
+
+  * the same expression sub-language as BIL;
+  * the same type system;
+  * the same semantics (of course).
+
+{END}
+
+{BEGIN: IR-identity}
+
+- although IR is said to be modifiable there is no 
+  destructive functions, nothing is really modified.
+
+- Each term in IR has an identity that represents the sameness
+  of the term in time and spatial dimensions. A term is entity, 
+  that has some attributes. The attributes may change, but the
+  identity of the entity may not change. For example, if you 
+  paint your car into a different color, this will be the same
+  car, just with different color.
+
+- Only concrete objects have identities. For example, number `2`
+  and color `blue` are abstract entities. They do not have attributes,
+  they are permanent and do not change in time. Thus, number `2` is
+  always the same number `2`. As well as `2 + 2` is always the same
+  `2 + 2`.
+
+- BIL AST is abstract. BIR is concrete. 
+
+{END}
+
+
+{BEGIN: IR-structure}
+        +--------------------------------------------------------+
+        |                +-------------------+                   |
+        |                |      program      |                   |
+        |                +---------+---------+                   |
+        |                          |*                            |
+        |                +---------+---------+                   |
+        |                |        sub        |                   |
+        |                +---------+---------+                   |
+        |                          |                             |
+        |        +-----------------+---------------+             |
+        |        |*                                |*            |
+        |  +-----+-------+                 +-------+-------+     |
+        |  |    arg      |                 |      blk      |     |
+        |  +-------------+                 +-------+-------+     |
+        |                                          |             |
+        |           +---------------+--------------+             |
+        |           |*              |*             | *           |
+        |     +-----+-----+   +-----+-----+   +----+-----+       |
+        |     |    phi    |   |    def    |   |   jmp    |       |
+        |     +-----------+   +-----------+   +----------+       |
+        +--------------------------------------------------------+
+{END}
+
+
+{BEGIN: bir-blk}
+
+- phi node is a pair, with `var` on the left and a map `tid => exp` on the right.
+
+- definition is a pair `var * exp`, that simple.
+
+- jump is a complex beast it is a pair of condition and kind.
+  * Condition is an `exp` that is true, when the branch is taken
+  * kind is:
+    | Goto label 
+    | Call label * label option
+    | Ret  label
+    | Int  int * tid
+
+
+type label = 
+    | Direct of tid
+    | Indirect of exp
+{END}
+
+{BEGIN: bir-example}
+00000019: sub example()
+00000001: 
+00000009: goto %00000002
+
+00000002: 
+0000000a: k.1 := false
+0000000b: i.1 := 0x1:32
+0000000c: j.1 := 0x2:32
+0000000d: goto %00000003
+
+00000003: 
+0000001a: i.2 := phi([i.1, %00000002], [i.3, %00000004])
+0000001c: j.2 := phi([j.1, %00000002], [j.3, %00000004])
+0000000e: when i.2 <= j.2 goto %00000004
+0000000f: goto %00000005
+
+00000004: 
+00000010: j.3 := j.2 * 0x2:32
+00000011: k.2 := true
+00000012: i.3 := i.2 + 0x1:32
+00000013: goto %00000003
+
+00000005: 
+00000014: when k.2 goto %00000006
+00000015: goto %00000007
+
+00000006: 
+00000016: call j.3 with return %00000008
+
+00000007: 
+00000017: i.4 := i.3 + 0x1:32
+00000018: goto %00000008
+
+00000008: 
+0000001b: i.5 := phi([i.3, %00000006], [i.4, %00000007])
+{END}
