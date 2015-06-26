@@ -1,0 +1,153 @@
+
+{BEGIN: greetings}
+                  Prepare yourself
+          today we will get our hands dirty
+                    (hopefully)
+
+* Latest BAP from master branch
+
+* opam upgrade bap
+
+  -=-=-= Synchronizing pinned packages -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  [bap] git://github.com/BinaryAnalysisPlatform/bap.git already up-to-date
+  Already up-to-date.
+
+* Your IDE is set up and ready to work.
+
+{END}
+
+
+{BEGIN: bottomup-vs-topdown}
+
+* A week ago we get a bottom-up view on BAP
+
+* It is not needed to do a Program Analysis...
+  but it helps in obtaining intuition about BAP
+
+* Today we will get a top-down view on BAP
+  and we will use the semantic layer of the library
+{END}
+
+{BEGIN: entry-point}
+
+* You don't need to scale a long ladder from bytes
+  to a lifted IR
+
+* You can just use an elevator, and be right there
+  in one line of code
+
+* Or you can be even delivered right into the place by
+  a plugin system.
+
+* So, what is this place, that I'm talking about?
+
+* It is called `Project`. Project consolidates all
+  known information about a target of analysis:
+
+  - IR model of a program
+  - Memory model of a program
+  - Machine code representation
+  - Symbol information
+  - User defined information
+
+{END}
+
+>>> Here we digress to project.mli
+
+{BEGIN: program}
+                                                
+* IR is a model of a program that is build out of terms.
+
+* The toplevel term - a term that contains all other terms,
+  and is not contained by any other terms. It represents all
+  program.
+
+* Sub represents a subroutine. It is a low-level, Fortran-77
+  like view on a subroutine. All arguments are
+  pass-by-reference.  there is no specific return value, but
+  arguments have intentions: - Input - Output - Input-Output
+
+* Other then arguments, subroutine contains blocks.  They
+  are building blocks of a program. Each block consists of
+  three parts:
+  
+  +---------------+
+  |   phi terms   |
+  +---------------+
+  |   def terms   |
+  +---------------+
+  |   jmp terms   |
+  +---------------+
+
+* phi term is a multi-definition of a variable, i.e.,
+  depending on a control flow path, it can have one of
+  specified values.
+  
+* def term is a regular definition of a variable.
+
+* jmp term represents an outgoing edges of the block.
+{END}
+
+
+{BEGIN: example-1}
+00000002: 
+0000000a: k.1 := false
+0000000b: i.1 := 0x1:32
+0000000c: j.1 := 0x2:32
+0000000d: goto %00000003
+
+00000003: 
+0000001a: i.2 := phi([i.1, %00000002], [i.3, %00000004])
+0000001c: j.2 := phi([j.1, %00000002], [j.3, %00000004])
+0000000e: when i.2 <= j.2 goto %00000004
+0000000f: goto %00000005
+
+00000004: 
+00000010: j.3 := j.2 * 0x2:32
+00000011: k.2 := true
+00000012: i.3 := i.2 + 0x1:32
+00000013: goto %00000003
+{END}
+
+{BEGIN: control-flow}
+00000001:
+00000002: when C_1 call R0 return %00000001
+00000003: when C_2 call %00000001 return %00000001
+00000004: when C_3 call %00000001 noreturn
+00000006: when C_4 interrupt 42 return %00000001
+00000005: return LR
+{END}
+
+
+>>> Digress to Term interface.
+>>> Digress to Terms interface
+
+{BEGIN: lets-get-ready-to-rumble}
+
+* We need to install plugins
+  - If not cloned, then:
+   $ git clone https://github.com/BinaryAnalysisPlatform/bap-plugins.git
+  - else
+  $ git pull
+
+* Let's create a new plugin
+  $ mkdir deadcode
+  $ cd deadcode
+  
+* We need to have something to play with
+
+  $ curl -L http://bit.ly/1J886g3 | tar xzv 
+
+* We need to compile SSA plugin
+
+  $ cd ../ssa
+  $ bapbuild ssa.plugin
+  $ cd -
+
+* Let's take look at SSA form
+
+  $ bap -L../ssa -lssa strconcat -dbir
+
+* Let's start to code
+
+{END}
